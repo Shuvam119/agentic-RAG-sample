@@ -10,3 +10,4 @@ python-dotenv
 streamlit
 pypdf
 python-docx
+tavily-python

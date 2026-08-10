@@ -1,15 +1,15 @@
-from src.vectorstore import get_vectorstore
+import sys
+
+from src.vectorstore import retrieve
 
 
-vectorstore = get_vectorstore()
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-retriever = vectorstore.as_retriever(
-    search_kwargs={"k": 5}
-)
 
 question = input("Ask a question: ")
 
-results = retriever.invoke(question)
+results = retrieve(question, k=5)
 
 print(f"\nRetrieved {len(results)} chunks:\n")
 
@@ -17,7 +17,7 @@ for i, document in enumerate(results, 1):
     print("=" * 60)
     print(f"RESULT {i}")
     print("=" * 60)
-    for key, value in document.metadata.items():
+    for key, value in document["metadata"].items():
         print(f"{key}: {value}")
     print("-" * 60)
-    print(document.page_content[:1000])
+    print(document["text"][:1000])

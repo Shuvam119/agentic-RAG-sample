@@ -3,7 +3,7 @@ from src.agent import create_agent
 
 agent = create_agent()
 
-question = input("Ask CloudDesk: ")
+question = input("Ask the agent: ")
 
 result = agent.invoke(
     {

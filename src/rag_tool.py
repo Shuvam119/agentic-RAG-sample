@@ -1,24 +1,25 @@
 from langchain_core.tools import tool
 
-from src.vectorstore import get_vectorstore
+from src.vectorstore import retrieve
 
 
 @tool
 def search_knowledge_base(query: str) -> str:
     """
-    Search the CloudDesk documentation.
+    Search the internal documentation knowledge base.
 
     Use this tool when the user's question requires
-    information from CloudDesk documentation.
+    information from the indexed internal documents.
     """
 
-    vectorstore = get_vectorstore()
+    try:
+        documents = retrieve(query, k=8)
 
-    retriever = vectorstore.as_retriever(
-        search_kwargs={"k": 8}
-    )
-
-    documents = retriever.invoke(query)
+    except Exception:
+        return (
+            "The internal knowledge base is currently unavailable. "
+            "No documentation was retrieved."
+        )
 
     if not documents:
         return "No relevant documentation was found."
@@ -27,19 +28,21 @@ def search_knowledge_base(query: str) -> str:
 
     for i, document in enumerate(documents, 1):
 
-        metadata = document.metadata
+        metadata = document["metadata"]
 
         results.append(
             f"""
 SOURCE {i}
-Title: {metadata.get("source", "Unknown")}
+Title: {metadata.get("title") or metadata.get("filename", "Unknown")}
 Version: {metadata.get("version", "Unknown")}
 Document Type: {metadata.get("document_type", "Unknown")}
-Status: {metadata.get("status", "Unknown")}
+Status: {metadata.get("lifecycle_status", "Unknown")}
 Audience: {metadata.get("audience", "Unknown")}
+Product: {metadata.get("product", "Unknown")}
+Source: {metadata.get("filename", "Unknown")}
 
 Content:
-{document.page_content}
+{document["text"]}
 """
         )
 
