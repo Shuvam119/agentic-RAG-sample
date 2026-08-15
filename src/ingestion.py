@@ -157,6 +157,45 @@ _FILENAME_TYPE_SIGNALS = (
     ("troubleshoot", "Troubleshooting Guide"),
 )
 
+COMPANY_NAMES = {
+    "xyz", "xyzcorp", "xyzcorporation", "acme", "global",
+}
+
+# Filename tokens that signal a document-type suffix rather than the product
+# name (e.g. XYZ_StreamCutPro_API_IntegrationGuide_v1.0 -> product: StreamCutPro).
+_DOCUMENT_TYPE_TOKEN_SIGNALS = {
+    "faq", "user", "guide", "job", "aid", "quick", "reference", "sop",
+    "release", "notes", "known", "issues", "api", "integration", "admin",
+    "administrator", "troubleshooting", "troubleshoot", "training", "manual",
+    "product", "policy", "standard", "operating", "procedure",
+    "userguide", "jobaid", "quickreference", "quickreferenceguide",
+    "integrationguide", "apiguide", "apireference", "releasenotes",
+    "knownissues", "adminguide", "trainingmanual", "troubleshootingguide",
+    "startupguide", "installationguide", "setupguide",
+}
+
+
+def _product_from_filename(filename: str) -> str:
+    stem = Path(filename).stem
+    parts = re.split(r"[_\-]+", stem)
+
+    parts = [
+        part for part in parts
+        if not re.match(r"^(?:v|ver|version)?\d+(?:\.\d+)*$", part.lower())
+    ]
+
+    if parts and parts[0].lower() in COMPANY_NAMES:
+        parts = parts[1:]
+
+    kept = []
+    for part in parts:
+        if part.lower() in _DOCUMENT_TYPE_TOKEN_SIGNALS:
+            break
+        kept.append(part)
+
+    return " ".join(kept).strip() or "General"
+
+
 _HEADER_BODY_MARKERS = (
     r"summary",
     r"table\s+of\s+contents",
@@ -277,11 +316,13 @@ def extract_metadata(document: Dict[str, Any]) -> Dict[str, Any]:
 
     version = _first_match(
         r"\b(?:version|ver|v)\s*(\d+(?:\.\d+)*)\b", haystack, "Unspecified")
-    product = _first_match(
-        r"(?:product|application|platform)\s*[:\-]\s*([^\n]{2,60})",
-        _header_section(text),
-        "General",
-    )
+    product = _product_from_filename(filename)
+    if product == "General":
+        product = _first_match(
+            r"(?:product|application|platform)\s*[:\-]\s*([^\n]{2,60})",
+            _header_section(text),
+            "General",
+        )
     department = _first_match(
         r"(?:department|owner|team)\s*[:\-]\s*([^\n]{2,60})", text, "Documentation")
     author = _first_match(

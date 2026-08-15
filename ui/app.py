@@ -31,9 +31,21 @@ if "messages" not in st.session_state:
 
 URL_PATTERN = re.compile(r"(?<!\]\()(https?://[^\s\)]+)")
 
+CITATION_PATTERNS = [
+    (re.compile(r"【WEB SOURCE (\d+)】"), r"[Web source \1]"),
+    (re.compile(r"【(\d+)[^】]*】"), r"[SOURCE \1]"),
+]
+
 
 def link_urls(text):
+    text = link_citations(text)
     return URL_PATTERN.sub(lambda m: f"[{m.group(0)}]({m.group(0)})", text)
+
+
+def link_citations(text):
+    for pattern, replacement in CITATION_PATTERNS:
+        text = pattern.sub(replacement, text)
+    return text
 
 
 def extract_sources(content):

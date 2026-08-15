@@ -1,28 +1,33 @@
 from langchain_core.tools import tool
 
+from src.config import TOP_K
 from src.vectorstore import retrieve
 
 
 @tool
 def search_knowledge_base(query: str) -> str:
-    """
-    Search the internal documentation knowledge base.
+    """Search the internal documentation knowledge base.
 
-    Use this tool when the user's question requires
-    information from the indexed internal documents.
+    Call this tool first for every question. Returns documentation sources or NO_RELEVANT_DOCUMENTATION.
     """
-
     try:
-        documents = retrieve(query, k=8)
+        documents = retrieve(query, k=TOP_K)
 
     except Exception:
         return (
+            "NO_RELEVANT_DOCUMENTATION. "
             "The internal knowledge base is currently unavailable. "
-            "No documentation was retrieved."
+            "No documentation was retrieved. There are no documentation "
+            "sources to cite."
         )
 
     if not documents:
-        return "No relevant documentation was found."
+        return (
+            "NO_RELEVANT_DOCUMENTATION. The internal knowledge base returned "
+            "no documentation matching this query. There are ZERO documentation "
+            "sources, so nothing can be cited from the knowledge base. If you "
+            "still need an answer, use general knowledge or search_web."
+        )
 
     results = []
 

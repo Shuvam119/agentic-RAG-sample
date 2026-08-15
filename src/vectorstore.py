@@ -1,6 +1,7 @@
 """Read access to THIS project's own vector index (vectorstore/chroma_db)."""
 
 import logging
+import re
 
 import chromadb
 import numpy as np
@@ -8,6 +9,7 @@ import numpy as np
 from src.config import (
     COLLECTION_NAME,
     EMBEDDING_MODEL,
+    PRODUCT_SIMILARITY_THRESHOLD,
     RELEVANCE_MARGIN,
     SIMILARITY_THRESHOLD,
     TOP_K,
@@ -21,6 +23,7 @@ _client = None
 _collection = None
 _model = None
 _stats_cache = None
+_known_products = None
 
 
 def get_vectorstore():
@@ -36,11 +39,12 @@ def get_vectorstore():
 
 def reset_caches():
     """Drop cached client/collection/stats so a rebuild is picked up."""
-    global _client, _collection, _stats_cache
+    global _client, _collection, _stats_cache, _known_products
 
     _client = None
     _collection = None
     _stats_cache = None
+    _known_products = None
 
 
 def get_collection():
@@ -71,12 +75,56 @@ def embed_query(text):
     return get_embeddings().embed_text(text, is_query=True)
 
 
+def _normalize_name(text):
+    """Fold a name into a comparable form: lowercase, alphanumeric only."""
+    return re.sub(r"[^a-z0-9]", "", str(text).lower())
+
+
+def get_known_products():
+    """Return the product names present in the index (excluding "General")."""
+    global _known_products
+
+    if _known_products is None:
+        stats = get_stats()
+        _known_products = [
+            product for product in stats["products"]
+            if product and product != "General"
+        ]
+
+    return _known_products
+
+
+def query_mentions_known_product(query):
+    """True when the query names a product that exists in the index.
+
+    Normalizes both sides (StreamCutPro == "StreamCut Pro" == "stream-cut-pro")
+    so a real-world product that happens to share the fictional product's name
+    still routes to the internal documentation.
+    """
+    normalized = _normalize_name(query)
+
+    if not normalized:
+        return False
+
+    return any(
+        _normalize_name(product) in normalized
+        for product in get_known_products()
+    )
+
+
 def retrieve(query, k=TOP_K, similarity_threshold=SIMILARITY_THRESHOLD):
     """Search the knowledge base and return only relevant chunks.
 
-    A query must beat the corpus-mean similarity by a relevance margin before
-    any chunk is returned, so an unrelated query (e.g. general knowledge)
-    returns an empty list instead of irrelevant documentation.
+    Two gates decide whether a query is relevant to this corpus:
+
+    * If the query explicitly names an indexed product (StreamCutPro,
+      PolicyHub, ...) it is treated as a knowledge-base question and only the
+      absolute floor PRODUCT_SIMILARITY_THRESHOLD applies. This guarantees a
+      question about a product, even one that shares its name with a real-world
+      product, returns documentation.
+    * Otherwise the query must beat the corpus-mean similarity by a relevance
+      margin, so unrelated queries (e.g. general knowledge) return an empty
+      list instead of forcing the agent to cite irrelevant documentation.
     """
 
     collection = get_collection()
@@ -98,10 +146,17 @@ def retrieve(query, k=TOP_K, similarity_threshold=SIMILARITY_THRESHOLD):
     top_similarity = similarities[0]
     mean_similarity = sum(similarities) / len(similarities)
 
-    if (
-        top_similarity < similarity_threshold
-        or (top_similarity - mean_similarity) < RELEVANCE_MARGIN
-    ):
+    mentions_product = query_mentions_known_product(query)
+
+    if mentions_product:
+        relevant = top_similarity >= PRODUCT_SIMILARITY_THRESHOLD
+    else:
+        relevant = (
+            top_similarity >= similarity_threshold
+            and (top_similarity - mean_similarity) >= RELEVANCE_MARGIN
+        )
+
+    if not relevant:
         return []
 
     documents = []

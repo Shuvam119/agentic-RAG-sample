@@ -10,14 +10,10 @@ load_dotenv()
 
 @tool
 def search_web(query: str) -> str:
-    """
-    Search the public web for current or external information.
+    """Search the public web.
 
-    Use this tool when the user asks about information that is
-    not contained in the internal knowledge base,
-    or when current external information is required.
+    Use only after the knowledge base returned NO_RELEVANT_DOCUMENTATION, or for current events and general knowledge.
     """
-
     api_key = os.getenv("TAVILY_API_KEY")
 
     if not api_key:
@@ -28,7 +24,7 @@ def search_web(query: str) -> str:
     response = client.search(
         query=query,
         search_depth="basic",
-        max_results=5,
+        max_results=3,
         include_answer=False,
     )
 
@@ -42,7 +38,10 @@ def search_web(query: str) -> str:
     for i, result in enumerate(results, 1):
         title = result.get("title", "Untitled")
         url = result.get("url", "")
-        content = result.get("content", "")
+        content = " ".join((result.get("content", "") or "").split())
+
+        if len(content) > 400:
+            content = content[:400].rsplit(" ", 1)[0] + " […]"
 
         formatted_results.append(
             f"""
