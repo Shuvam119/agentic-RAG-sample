@@ -26,6 +26,7 @@ _client_lock = threading.Lock()
 _collection_lock = threading.Lock()
 _model_lock = threading.Lock()
 _stats_cache = None
+_stats_cache_sig = None
 _stats_lock = threading.Lock()
 _stats_path = VECTORSTORE_DIR / "stats.json"
 _known_products = None
@@ -50,11 +51,12 @@ def get_vectorstore():
 
 def reset_caches():
     """Drop cached client/collection/stats so a rebuild is picked up."""
-    global _client, _collection, _stats_cache, _known_products
+    global _client, _collection, _stats_cache, _stats_cache_sig, _known_products
 
     _client = None
     _collection = None
     _stats_cache = None
+    _stats_cache_sig = None
     _known_products = None
 
     if _stats_path.exists():
@@ -170,12 +172,14 @@ def get_known_products():
     """Return the product names present in the index (excluding "General")."""
     global _known_products
 
-    if _known_products is None:
-        stats = get_stats()
-        _known_products = [
-            product for product in stats["products"]
-            if product and product != "General"
-        ]
+    stats = get_stats()
+    products = [
+        product for product in stats["products"]
+        if product and product != "General"
+    ]
+
+    if _known_products != products:
+        _known_products = products
 
     return _known_products
 
@@ -306,28 +310,47 @@ def get_stats():
 
     Fast path: a JSON sidecar written at index time (and refreshed after each
     rebuild) is read directly, so the UI never has to load chromadb just to
-    display sidebar stats. Falls back to computing from the collection, which
-    refreshes the sidecar.
+    display sidebar stats. The cached value is invalidated whenever the sidecar
+    changes on disk, so a rebuilt index is picked up without restarting the
+    app. Falls back to computing from the collection, which refreshes the
+    sidecar.
     """
-    global _stats_cache
+    global _stats_cache, _stats_cache_sig
 
-    if _stats_cache is not None:
+    signature = _sidecar_signature()
+
+    if _stats_cache is not None and _stats_cache_sig == signature:
         return _stats_cache
 
     with _stats_lock:
-        if _stats_cache is not None:
+        if _stats_cache is not None and _stats_cache_sig == signature:
             return _stats_cache
 
         cached = _read_stats_sidecar()
         if cached is not None:
             _stats_cache = cached
+            _stats_cache_sig = signature
             return _stats_cache
 
         result = _compute_stats()
         _stats_cache = result
+        _stats_cache_sig = signature
         _write_stats_sidecar(result)
 
     return _stats_cache
+
+
+def _sidecar_signature():
+    """Signature of the stats sidecar, so cached stats can detect a rebuild.
+
+    Returns None when the sidecar does not exist (e.g. the index has never
+    been built or was deleted).
+    """
+    try:
+        stat = _stats_path.stat()
+        return (stat.st_mtime_ns, stat.st_size)
+    except OSError:
+        return None
 
 
 def _read_stats_sidecar():
