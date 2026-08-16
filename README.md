@@ -41,7 +41,8 @@ The behavior is deliberately simple and knowledge-base-first:
   consulted first, web search is a fallback only, and invented sources are
   prohibited.
 - **Relevance-gated retrieval** - chunks below a cosine-similarity threshold
-  are dropped, so unrelated general-knowledge questions do not get forced
+  are dropped, and the query must also share a meaningful term with the
+  retrieved chunks, so unrelated general-knowledge questions do not get forced
   documentation sources.
 - **Product-name boost** - when a query explicitly names an indexed product
   (StreamCutPro, PolicyHub), a relaxed similarity floor applies so the query

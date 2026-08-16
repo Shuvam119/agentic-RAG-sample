@@ -23,12 +23,11 @@ EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")
 COLLECTION_NAME = "documents"
 
 # Relevance gate for retrieved results. A query is only considered relevant
-# if its top hit is at least SIMILARITY_THRESHOLD similar (absolute) AND beats
-# the corpus-mean similarity by at least RELEVANCE_MARGIN. Unrelated queries
+# if its top hit is at least SIMILARITY_THRESHOLD similar (absolute) AND shares
+# at least one meaningful term with the retrieved chunks. Unrelated queries
 # (e.g. general knowledge) therefore return nothing instead of forcing the
 # agent to cite irrelevant documentation.
 SIMILARITY_THRESHOLD = float(os.getenv("SIMILARITY_THRESHOLD", "0.55"))
-RELEVANCE_MARGIN = float(os.getenv("RELEVANCE_MARGIN", "0.10"))
 
 # Relaxed absolute-similarity floor applied when the query explicitly names a
 # product that exists in the index (e.g. StreamCutPro, PolicyHub). This keeps

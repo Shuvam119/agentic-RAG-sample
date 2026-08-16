@@ -11,7 +11,6 @@ from src.config import (
     COLLECTION_NAME,
     EMBEDDING_MODEL,
     PRODUCT_SIMILARITY_THRESHOLD,
-    RELEVANCE_MARGIN,
     SIMILARITY_THRESHOLD,
     TOP_K,
     VECTORSTORE_DIR,
@@ -102,6 +101,71 @@ def _normalize_name(text):
     return re.sub(r"[^a-z0-9]", "", str(text).lower())
 
 
+# Stopwords are too common to signal that a chunk is on-topic, so they are
+# ignored when checking whether a query's terms appear in the retrieved text.
+_STOPWORDS = frozenset({
+    "a", "about", "an", "and", "are", "as", "at", "be", "been", "but", "by",
+    "can", "could", "did", "do", "does", "for", "from", "get", "got", "had",
+    "has", "have", "how", "i", "if", "in", "into", "is", "it", "its", "me",
+    "my", "of", "on", "or", "our", "should", "so", "that", "the", "their",
+    "there", "these", "they", "this", "those", "to", "use", "using", "was",
+    "we", "were", "what", "when", "where", "which", "who", "why", "will",
+    "with", "would", "you", "your",
+})
+
+
+def _query_terms(query):
+    """Meaningful content-word tokens of a query, stopwords removed."""
+    return [
+        word
+        for word in re.findall(r"[a-z]+", query.lower())
+        if len(word) >= 3 and word not in _STOPWORDS
+    ]
+
+
+def _query_terms_overlap(query, texts):
+    """True when a query term actually appears in the retrieved texts.
+
+    This lexical check keeps the embedding gate honest. A query about a topic
+    the docs never mention (e.g. "what is streamlit") can score highly against
+    a product description purely because of the shared "what is X / X is"
+    pattern, but it shares no vocabulary with the corpus and is therefore
+    rejected instead of forcing the agent to cite irrelevant documentation.
+    Morphological variants (documentation/documents, setting/settings) are
+    treated as the same term via containment and shared-prefix matching.
+    """
+    terms = _query_terms(query)
+
+    if not terms:
+        return False
+
+    chunk_words = [
+        word
+        for text in texts
+        for word in re.findall(r"[a-z]+", text.lower())
+        if len(word) >= 3
+    ]
+
+    for term in terms:
+        for word in chunk_words:
+            if term == word:
+                return True
+            if len(term) >= 4 and term in word:
+                return True
+            if len(word) >= 4 and word in term:
+                return True
+
+            shared = 0
+            for a, b in zip(term, word):
+                if a != b:
+                    break
+                shared += 1
+            if shared >= 7 and len(term) >= 7 and len(word) >= 7:
+                return True
+
+    return False
+
+
 def get_known_products():
     """Return the product names present in the index (excluding "General")."""
     global _known_products
@@ -176,9 +240,12 @@ def retrieve(query, k=TOP_K, similarity_threshold=SIMILARITY_THRESHOLD):
       absolute floor PRODUCT_SIMILARITY_THRESHOLD applies. This guarantees a
       question about a product, even one that shares its name with a real-world
       product, returns documentation.
-    * Otherwise the query must beat the corpus-mean similarity by a relevance
-      margin, so unrelated queries (e.g. general knowledge) return an empty
-      list instead of forcing the agent to cite irrelevant documentation.
+    * Otherwise the query must meet the absolute SIMILARITY_THRESHOLD and share
+      at least one meaningful term with the retrieved chunks
+      (_query_terms_overlap). Queries that only pattern-match (e.g. general
+      knowledge such as "what is streamlit") score well on embeddings but share
+      no vocabulary with the corpus, so they return an empty list instead of
+      forcing the agent to cite irrelevant documentation.
     """
 
     collection = get_collection()
@@ -198,16 +265,16 @@ def retrieve(query, k=TOP_K, similarity_threshold=SIMILARITY_THRESHOLD):
     similarities = [1 - distance for distance in distances]
 
     top_similarity = similarities[0]
-    mean_similarity = sum(similarities) / len(similarities)
 
     mentions_product = query_mentions_known_product(query)
 
     if mentions_product:
         relevant = top_similarity >= PRODUCT_SIMILARITY_THRESHOLD
     else:
+        top_texts = results["documents"][0][:k]
         relevant = (
             top_similarity >= similarity_threshold
-            and (top_similarity - mean_similarity) >= RELEVANCE_MARGIN
+            and _query_terms_overlap(query, top_texts)
         )
 
     if not relevant:
