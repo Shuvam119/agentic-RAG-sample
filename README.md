@@ -17,23 +17,29 @@ local BGE embeddings.
 
 ## How the agent decides what to search
 
-The behavior is deliberately simple and knowledge-base-first:
+Routing is decided **in code, not by the LLM**. A deterministic LangGraph
+router walks a fixed path:
 
-1. **The knowledge base is always searched first.** For every question the
-   agent calls `search_knowledge_base` before anything else - there are no
-   exceptions and the agent never skips it in favor of the web.
+1. **The knowledge base is always searched first.** Every question enters the
+   `search_knowledge_base` node before anything else - there are no
+   exceptions and the LLM is never given the choice to skip it.
 2. **Documentation wins.** If the knowledge base returns sources, the answer
    is built from those documents and cites them (`[SOURCE N]`).
-3. **Product questions always get documentation answers.** The products in
-   the docs (e.g. StreamCutPro, PolicyHub) are the company's own. Even if the
-   question is about a real-world product that happens to share the same name,
-   the agent answers from the internal documentation - and may add a one-line
-   anecdote noting that a similarly named real-world product exists.
-4. **Web search is only a fallback.** `search_web` is used only when the
-   knowledge base returned `NO_RELEVANT_DOCUMENTATION` and the question is
-   genuinely general knowledge, current events, or external information
-   (e.g. "What is the capital of India?"). It is never used to answer product
-   questions.
+3. **Product questions never reach the web.** The products in the docs
+   (e.g. StreamCutPro, PolicyHub) are the company's own. Even if the question
+   is about a real-world product that happens to share the same name - or if
+   the knowledge base has no matching docs at all - the agent answers from the
+   internal documentation (or states that no internal documentation exists)
+   and may add a one-line anecdote noting that a similarly named real-world
+   product exists. The web tool is structurally unreachable on this path.
+4. **Web search is only a fallback.** `search_web` runs only when the
+   knowledge base returned `NO_RELEVANT_DOCUMENTATION` **and** the query does
+   not name an indexed product - i.e. genuinely general knowledge, current
+   events, or external information (e.g. "What is the capital of India?").
+
+The answering LLM is bound to **no tools**, so it cannot fetch external
+sources on its own; the graph shape enforces the routing rather than a
+prompt.
 
 ## Features
 
@@ -62,7 +68,7 @@ The behavior is deliberately simple and knowledge-base-first:
 
 ```
 ui/app.py            Streamlit chat interface (streams agent steps, shows sources)
-src/agent.py         Agent construction + KB-first system prompt
+src/agent.py         Deterministic LangGraph router + no-tool answer LLM
 src/rag_tool.py      search_knowledge_base tool (k=TOP_K, metadata-aware)
 src/web_search_tool.py  search_web tool (Tavily, fallback only)
 src/vectorstore.py   Read access to this project's own ChromaDB + relevance gate
@@ -80,8 +86,9 @@ src/config.py        Paths, model, thresholds
 - **Vector store:** this project's ChromaDB (`vectorstore/chroma_db`,
   collection `documents`, cosine distance)
 - **Web search:** Tavily (`search_depth="basic"`, up to 3 results)
-- **Orchestration:** LangChain `create_agent` (LangGraph) with two tools:
-  `search_knowledge_base` and `search_web`
+- **Orchestration:** a hand-built LangGraph (`StateGraph`) with a fixed
+  KB-first path; the answering LLM is bound to no tools, so it cannot call
+  `search_knowledge_base`/`search_web` on its own.
 
 ## Setup
 
@@ -139,8 +146,8 @@ Open http://localhost:8501 and ask questions such as:
 
 ## Notes
 
-- The project uses the LangChain 1.x `create_agent` API (LangGraph-based);
-  the legacy `create_tool_calling_agent`/`AgentExecutor` API is not
-  available in this version.
+- The agent is a hand-built LangGraph `StateGraph` (LangGraph 1.x), not the
+  LangChain `create_agent`/`AgentExecutor` API. The graph exposes the same
+  `invoke`/`stream` contract, so the UI and `test_agent.py` are unchanged.
 - `vectorstore/chroma_db` is rebuilt only by `python -m src.indexer`.
 - `test_agent.py` and `test_retrieval.py` prompt for input via stdin.
