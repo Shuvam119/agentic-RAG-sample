@@ -57,5 +57,5 @@ def create_agent(model_name=MODEL_NAME):
         model=llm,
         tools=[search_knowledge_base, search_web],
         system_prompt=SYSTEM_PROMPT,
-        debug=True,
+        debug=False,
     ).with_config({"recursion_limit": MAX_AGENT_STEPS})

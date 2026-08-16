@@ -1,10 +1,13 @@
 import re
 import sys
+import threading
 from pathlib import Path
 
 import streamlit as st
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
+
+from src.vectorstore import get_stats
 
 
 st.set_page_config(
@@ -14,8 +17,32 @@ st.set_page_config(
 )
 
 
+def _warmup():
+    """Preload the expensive stacks in the background so the first question
+    is fast: the LangChain agent graph, the ChromaDB stack (stats + collection)
+    and the sentence-transformers/torch embedding model. The UI has already
+    rendered by the time these finish."""
+    try:
+        from src.agent import create_agent
+
+        create_agent()
+
+        from src.vectorstore import get_collection, get_embeddings, get_stats
+
+        get_collection()
+        get_stats()
+        get_embeddings()
+    except Exception:
+        pass
+
+
+if "warmup_started" not in st.session_state:
+    st.session_state.warmup_started = True
+    threading.Thread(target=_warmup, daemon=True).start()
+
+
 st.title("Documentation Knowledge Agent")
-st.caption("Agentic RAG-powered documentation assistant")
+st.caption("Answers come from the internal documentation; web search is a fallback.")
 
 
 @st.cache_resource
@@ -32,7 +59,7 @@ if "messages" not in st.session_state:
 URL_PATTERN = re.compile(r"(?<!\]\()(https?://[^\s\)]+)")
 
 CITATION_PATTERNS = [
-    (re.compile(r"【WEB SOURCE (\d+)】"), r"[Web source \1]"),
+    (re.compile(r"【WEB SOURCE (\d+)[^】]*】"), r"[Web source \1]"),
     (re.compile(r"【(\d+)[^】]*】"), r"[SOURCE \1]"),
 ]
 
@@ -83,7 +110,10 @@ def render_sources(sources):
             seen.add(key)
             unique.append(source)
 
-    with st.expander(f"Sources ({len(unique)})"):
+    doc_count = sum(1 for s in unique if s["kind"] == "doc")
+    web_count = sum(1 for s in unique if s["kind"] == "web")
+
+    with st.expander(f"Sources ({len(unique)}) — {doc_count} doc, {web_count} web"):
         for source in unique:
             if source.get("url"):
                 st.markdown(f"- 🌐 [{source['title']}]({source['url']})")
@@ -91,9 +121,17 @@ def render_sources(sources):
                 st.markdown(f"- 📚 {source['title']}")
 
 
-# Sidebar
-from src.vectorstore import get_stats
+def render_source_badges(tools_used):
+    parts = []
+    if "search_knowledge_base" in tools_used:
+        parts.append("📚 Knowledge base")
+    if "search_web" in tools_used:
+        parts.append("🌐 Web search")
+    if parts:
+        st.caption("Sources used: " + " · ".join(parts))
 
+
+# Sidebar
 with st.sidebar:
     st.header("Knowledge Base")
 
@@ -139,15 +177,17 @@ for message in st.session_state.messages:
 
     with st.chat_message(message["role"]):
 
-        if message.get("steps"):
-            st.caption(
-                "\n".join(f"• {step}" for step in message["steps"])
-            )
+        if message["role"] == "assistant" and message.get("tools_used"):
+            render_source_badges(message["tools_used"])
 
         st.markdown(link_urls(message["content"]))
 
         if message.get("sources"):
             render_sources(message["sources"])
+
+        if message.get("steps"):
+            with st.expander("Research steps"):
+                st.markdown("\n".join(f"- {step}" for step in message["steps"]))
 
 
 # Chat input
@@ -175,9 +215,11 @@ if question:
         steps = []
         sources = []
         messages = []
+        tools_used = []
         seen = 0
 
         status_area = st.empty()
+        status_area.markdown("🔍 **Thinking…**")
 
         try:
 
@@ -196,28 +238,25 @@ if question:
                             name = call["name"]
                             query = (call.get("args") or {}).get("query", "")
 
+                            tools_used.append(name)
+
                             if name == "search_web":
                                 steps.append(
-                                    f"🌐 **Searching the web** for `{query}`"
+                                    f"🌐 **Web search** for `{query}`"
                                 )
                             else:
                                 steps.append(
-                                    f"📚 **Searching the knowledge base** for `{query}`"
+                                    f"📚 **Knowledge base** for `{query}`"
                                 )
 
                     elif msg.type == "tool":
-
                         content = msg.content or ""
                         sources.extend(extract_sources(content))
 
-                        snippet = content.strip().replace("\n", " ")
-                        if len(snippet) > 160:
-                            snippet = snippet[:160] + "…"
-
-                        steps.append(f"↳ `{snippet}`")
-
                 seen = len(messages)
-                status_area.markdown("\n\n".join(steps))
+                status_area.markdown(
+                    f"🔍 {steps[-1]}…" if steps else "🔍 **Thinking…**"
+                )
 
             answer = (
                 messages[-1].content
@@ -231,10 +270,16 @@ if question:
 
         status_area.empty()
 
+        render_source_badges(tools_used)
+
         st.markdown(link_urls(answer))
 
         if sources:
             render_sources(sources)
+
+        if steps:
+            with st.expander("Research steps"):
+                st.markdown("\n".join(f"- {step}" for step in steps))
 
     st.session_state.messages.append(
         {
@@ -242,5 +287,6 @@ if question:
             "content": answer,
             "steps": steps,
             "sources": sources,
+            "tools_used": tools_used,
         }
     )

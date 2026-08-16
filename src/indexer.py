@@ -17,7 +17,12 @@ from src.ingestion import (
     load_documents_from_directory,
     DocumentChunker,
 )
-from src.vectorstore import get_collection, get_vectorstore, reset_caches
+from src.vectorstore import (
+    get_collection,
+    get_stats,
+    get_vectorstore,
+    reset_caches,
+)
 
 
 def build(rebuild: bool = True) -> int:
@@ -90,6 +95,8 @@ def build(rebuild: bool = True) -> int:
 
     collection.add(ids=ids, embeddings=embeddings, documents=texts,
                    metadatas=metadatas)
+
+    get_stats()
 
     print(f"Indexed {len(ids)} chunk(s) into {VECTORSTORE_DIR} "
           f"(collection: {COLLECTION_NAME}).")
