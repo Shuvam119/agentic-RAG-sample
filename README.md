@@ -17,35 +17,36 @@ local BGE embeddings.
 
 ## How the agent decides what to search
 
-Routing is decided **in code, not by the LLM**. A deterministic LangGraph
-router walks a fixed path:
+The agent combines **code-enforced routing** (deterministic) with an
+**intelligent LLM** that can decide when web search adds value:
 
-1. **The knowledge base is always searched first.** Every question enters the
-   `search_knowledge_base` node before anything else - there are no
+1. **Greetings are caught in code.** "hi", "hello", "thanks", etc. are
+   detected by a regex guard and answered directly — no tools, no KB, no web.
+2. **The knowledge base is always searched first.** Every substantive question
+   enters the `search_knowledge_base` node before anything else. There are no
    exceptions and the LLM is never given the choice to skip it.
-2. **Documentation wins.** If the knowledge base returns sources, the answer
-   is built from those documents and cites them (`[SOURCE N]`).
-3. **Product questions never reach the web.** The products in the docs
-   (e.g. StreamCutPro, PolicyHub) are the company's own. Even if the question
-   is about a real-world product that happens to share the same name - or if
-   the knowledge base has no matching docs at all - the agent answers from the
-   internal documentation (or states that no internal documentation exists)
-   and may add a one-line anecdote noting that a similarly named real-world
-   product exists. The web tool is structurally unreachable on this path.
-4. **Web search is only a fallback.** `search_web` runs only when the
-   knowledge base returned `NO_RELEVANT_DOCUMENTATION` **and** the query does
-   not name an indexed product - i.e. genuinely general knowledge, current
-   events, or external information (e.g. "What is the capital of India?").
-
-The answering LLM is bound to **no tools**, so it cannot fetch external
-sources on its own; the graph shape enforces the routing rather than a
-prompt.
+3. **The LLM decides whether web search is needed.** After receiving KB
+   results, the answering LLM has `search_web` available as a tool and uses it
+   intelligently:
+   - **KB answers the question** → the LLM answers from documentation and
+     cites `[SOURCE N]`. It does *not* call search_web.
+   - **KB has docs but not the answer** (e.g. "what are its market
+     equivalents?" when the KB only describes the product) → the LLM answers
+     what it can from the docs, then calls `search_web` for the rest.
+   - **KB has nothing** → the LLM decides: external / current-events
+     questions get `search_web`; self-contained facts and greetings do not.
+4. **Web results are synthesized without tools.** After executing `search_web`,
+   the agent composes a final answer from both KB and web sources using a
+   no-tools LLM call, so it cannot make additional web requests.
 
 ## Features
 
-- **Knowledge-base-first agent** - deterministic routing: the docs are always
-  consulted first, web search is a fallback only, and invented sources are
-  prohibited.
+- **Knowledge-base-first agent** - KB is always consulted first; web search
+  is used only when the LLM judges it necessary for a complete answer.
+- **Greeting guard** - "hi", "hello", etc. are answered instantly with no
+  tools, no KB lookup, and no web search.
+- **Intelligent hybrid search** - the LLM combines KB documentation with web
+  results when the documentation alone is insufficient.
 - **Relevance-gated retrieval** - chunks below a cosine-similarity threshold
   are dropped, and the query must also share a meaningful term with the
   retrieved chunks, so unrelated general-knowledge questions do not get forced
@@ -68,7 +69,7 @@ prompt.
 
 ```
 ui/app.py            Streamlit chat interface (streams agent steps, shows sources)
-src/agent.py         Deterministic LangGraph router + no-tool answer LLM
+src/agent.py         LangGraph agent: greeting guard → KB-first → LLM-decides web
 src/rag_tool.py      search_knowledge_base tool (k=TOP_K, metadata-aware)
 src/web_search_tool.py  search_web tool (Tavily, fallback only)
 src/vectorstore.py   Read access to this project's own ChromaDB + relevance gate
@@ -86,9 +87,9 @@ src/config.py        Paths, model, thresholds
 - **Vector store:** this project's ChromaDB (`vectorstore/chroma_db`,
   collection `documents`, cosine distance)
 - **Web search:** Tavily (`search_depth="basic"`, up to 3 results)
-- **Orchestration:** a hand-built LangGraph (`StateGraph`) with a fixed
-  KB-first path; the answering LLM is bound to no tools, so it cannot call
-  `search_knowledge_base`/`search_web` on its own.
+- **Orchestration:** a hand-built LangGraph (`StateGraph`) with a greeting
+  guard, KB-first path, and an LLM that decides whether to call `search_web`
+  when the documentation is insufficient.
 
 ## Setup
 
