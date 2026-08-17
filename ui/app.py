@@ -7,6 +7,13 @@ import streamlit as st
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
+_SRC_AGENT_PY = Path(__file__).resolve().parents[1] / "src" / "agent.py"
+
+
+def _agent_source_mtime() -> float:
+    return _SRC_AGENT_PY.stat().st_mtime_ns
+
+
 from src.vectorstore import get_stats
 
 
@@ -19,14 +26,11 @@ st.set_page_config(
 
 def _warmup():
     """Preload the expensive stacks in the background so the first question
-    is fast: the LangChain agent graph, the ChromaDB stack (stats + collection)
-    and the sentence-transformers/torch embedding model. The UI has already
-    rendered by the time these finish."""
+    is fast: the ChromaDB stack (stats + collection) and the
+    sentence-transformers/torch embedding model. The agent is created lazily
+    on first question, so the graph rebuilds automatically when the source
+    changes. The UI has already rendered by the time these finish."""
     try:
-        from src.agent import create_agent
-
-        create_agent()
-
         from src.vectorstore import get_collection, get_embeddings, get_stats
 
         get_collection()
@@ -45,11 +49,26 @@ st.title("Documentation Knowledge Agent")
 st.caption("Answers come from the internal documentation; web search is a fallback.")
 
 
-@st.cache_resource
 def load_agent():
+    """Return a cached agent or rebuild when the source changes.
+
+    Streamlit's ``@st.cache_resource`` persists the return value across page
+    reruns *and* across server restarts inside the same session, so code
+    changes to ``src/agent.py`` are not picked up automatically.  Instead we
+    store the agent in ``st.session_state`` and rebuild whenever the source
+    file's mtime changes (or the first run of a fresh session).
+    """
+    mtime = _agent_source_mtime()
+    cached = st.session_state.get("_agent")
+    if cached and st.session_state.get("_agent_mtime") == mtime:
+        return cached
+
     from src.agent import create_agent
 
-    return create_agent()
+    agent = create_agent()
+    st.session_state._agent = agent
+    st.session_state._agent_mtime = mtime
+    return agent
 
 
 if "messages" not in st.session_state:
