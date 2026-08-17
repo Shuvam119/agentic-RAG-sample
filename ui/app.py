@@ -14,7 +14,7 @@ def _agent_source_mtime() -> float:
     return _SRC_AGENT_PY.stat().st_mtime_ns
 
 
-from src.vectorstore import get_stats
+from src.vectorstore import get_stats, reset_caches
 
 
 st.set_page_config(
@@ -22,6 +22,38 @@ st.set_page_config(
     page_icon="🔎",
     layout="wide",
 )
+
+
+def _ensure_index():
+    """Build the vector index when the store is empty (e.g. first Streamlit Cloud deploy).
+
+    Raw documents ship with the repo, but ChromaDB is gitignored and must be
+    created at runtime. Without this, every query returns NO_RELEVANT_DOCUMENTATION
+    and the agent falls back to web search.
+    """
+    if get_stats()["total_chunks"] > 0:
+        return
+
+    if st.session_state.get("index_build_attempted"):
+        return
+
+    st.session_state.index_build_attempted = True
+
+    with st.spinner("Building knowledge base index (first run only)…"):
+        try:
+            from src.indexer import build
+
+            result = build(rebuild=True)
+            reset_caches()
+            if result != 0:
+                st.error(
+                    "No documents found to index. Ensure data/raw contains PDF or DOCX files."
+                )
+        except Exception as exc:
+            st.error(f"Failed to build knowledge base index: {exc}")
+
+
+_ensure_index()
 
 
 def _warmup():
